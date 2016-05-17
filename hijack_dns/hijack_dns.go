@@ -7,21 +7,39 @@ import (
 	"net"
 	"math/rand"
 	jww "github.com/spf13/jwalterweatherman"
+	"os"
+	"os/signal"
+	"syscall"
 )
 
-type handler func(dns.ResponseWriter, *dns.Msg)
-
 func Run(viper *viper.Viper) {
-	net := "127.0.0.1:8053"
-	err := dns.ListenAndServe("udp", net, nil)
-	if err != nil {
-		jww.FATAL.Fatalf("Failed to setup the " + net + " server: %s\n", err.Error())
+	adr := "127.0.2.1:8053"
+	net := "udp"
+
+	pattern := dns.Fqdn(".")
+	dns.HandleFunc(pattern, ServerHandler([]string{"8.8.8.8:53"}))
+	go func() {
+		err := dns.ListenAndServe(adr, net, nil)
+		if err != nil {
+			jww.FATAL.Fatalf("Failed to setup the " + adr + " server: %s\n", err.Error())
+		}
+	}()
+
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+
+	forever: for {
+		select {
+		case s := <-sig:
+			jww.INFO.Printf("Signal (%s) received, stopping\n", s.String())
+			break forever
+		}
 	}
 }
 
 // Returns an anonymous function configured to resolve DNS
 // queries with a specific set of remote servers.
-func ServerHandler(addresses []string) handler {
+func ServerHandler(addresses []string) dns.HandlerFunc {
 	randGen := rand.New(rand.NewSource(time.Now().UnixNano()))
 
 	// This is the actual handler
@@ -47,27 +65,29 @@ func ServerHandler(addresses []string) handler {
 				q.Name, nameserver)
 		}
 
+		for _, q := range req.Question {
+			if q.Name == "ya.ru" {
+				msg := new(dns.Msg)
+				msg.SetReply(req)
+				msg.Answer = make([]RR, 1)
+				w.WriteMsg(msg)
+				return
+			}
+		}
 		c := new(dns.Client)
 		c.Net = protocol
 		resp, rtt, err := c.Exchange(req, nameserver)
-
-		Redo:
-		switch {
-		case err != nil:
+		if err != nil {
 			jww.ERROR.Printf("%s\n", err.Error())
 			sendFailure(w, req)
 			return
-		case req.Id != resp.Id:
-			jww.ERROR.Printf("Id mismatch: %v != %v\n", req.Id, resp.Id)
-			sendFailure(w, req)
-			return
-		case resp.MsgHdr.Truncated && protocol != "tcp":
-			jww.WARN.Printf("Truncated answer for request %v, retrying TCP\n", req.Id)
-			c.Net = "tcp"
-			resp, rtt, err = c.Exchange(req, nameserver)
-			goto Redo
 		}
 
+		for _, a := range resp.Answer {
+			jww.INFO.Printf("Incoming answer #%v: %v - from %s\n",
+				resp.Id,
+				a, nameserver)
+		}
 		jww.INFO.Printf("Request #%v: %.3d µs, server: %s(%s), size: %d bytes\n", resp.Id, rtt / 1e3, nameserver, c.Net, resp.Len())
 		w.WriteMsg(resp)
 	} // end of handler
