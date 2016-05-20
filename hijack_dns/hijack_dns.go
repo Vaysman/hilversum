@@ -7,9 +7,6 @@ import (
 	"net"
 	"math/rand"
 	jww "github.com/spf13/jwalterweatherman"
-	"os"
-	"os/signal"
-	"syscall"
 )
 
 func Run(viper *viper.Viper) {
@@ -24,17 +21,6 @@ func Run(viper *viper.Viper) {
 			jww.FATAL.Fatalf("Failed to setup the " + adr + " server: %s\n", err.Error())
 		}
 	}()
-
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
-
-	forever: for {
-		select {
-		case s := <-sig:
-			jww.INFO.Printf("Signal (%s) received, stopping\n", s.String())
-			break forever
-		}
-	}
 }
 
 // Returns an anonymous function configured to resolve DNS
@@ -69,7 +55,6 @@ func ServerHandler(addresses []string) dns.HandlerFunc {
 			if q.Name == "ya.ru" {
 				msg := new(dns.Msg)
 				msg.SetReply(req)
-				msg.Answer = make([]RR, 1)
 				w.WriteMsg(msg)
 				return
 			}

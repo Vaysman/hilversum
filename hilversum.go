@@ -6,6 +6,9 @@ import (
 	"github.com/vaysman/hilversum/hijack_dns"
 	"github.com/vaysman/hilversum/http_proxy"
 	"github.com/vaysman/hilversum/web_interface"
+	"os"
+	"os/signal"
+	"syscall"
 )
 
 var config = viper.New()
@@ -47,4 +50,15 @@ func main() {
 	httpproxy.Run(config)
 	// start web interface
 	webinterface.Run(config)
+
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+
+	forever: for {
+		select {
+		case s := <-sig:
+			jww.INFO.Printf("Signal (%s) received, stopping\n", s.String())
+			break forever
+		}
+	}
 }
