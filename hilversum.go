@@ -35,7 +35,7 @@ func loadConfig() {
 
 func init() {
 	jww.SetLogThreshold(jww.LevelTrace)
-	jww.SetStdoutThreshold(jww.LevelInfo)
+	jww.SetStdoutThreshold(jww.LevelDebug)
 }
 
 func main() {

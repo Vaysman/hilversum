@@ -3,18 +3,17 @@ package hijackdns
 import (
 	"github.com/spf13/viper"
 	"github.com/miekg/dns"
-	"time"
 	"net"
-	"math/rand"
 	jww "github.com/spf13/jwalterweatherman"
 )
+
+const ttl = 1
 
 func Run(viper *viper.Viper) {
 	adr := "127.0.2.1:8053"
 	net := "udp"
 
-	pattern := dns.Fqdn(".")
-	dns.HandleFunc(pattern, ServerHandler([]string{"8.8.8.8:53"}))
+	Configure(viper)
 	go func() {
 		err := dns.ListenAndServe(adr, net, nil)
 		if err != nil {
@@ -23,28 +22,27 @@ func Run(viper *viper.Viper) {
 	}()
 }
 
+func Configure(viper *viper.Viper) {
+	addrs := map[string]string{
+		"y.ru.": "1.1.1.1",
+		"i.ru.": "2.2.2.2",
+		"ya.ru.": "3.3.3.3",
+		"i.co.": "4.4.4.4",
+	}
+	nameserver := "8.8.8.8:53"
+	pattern := dns.Fqdn(".")
+	dns.HandleRemove(pattern)
+	dns.HandleFunc(pattern, serverHandler(addrs, nameserver))
+	jww.DEBUG.Print("Configuring DNS Hijack")
+}
+
 // Returns an anonymous function configured to resolve DNS
 // queries with a specific set of remote servers.
-func ServerHandler(addresses []string) dns.HandlerFunc {
-	randGen := rand.New(rand.NewSource(time.Now().UnixNano()))
-
+func serverHandler(addresses map[string]string, nameserver string) dns.HandlerFunc {
 	// This is the actual handler
 	return func(w dns.ResponseWriter, req *dns.Msg) {
-		nameserver := addresses[randGen.Intn(len(addresses))]
-		var protocol string
-
-		switch t := w.RemoteAddr().(type) {
-		default:
-			jww.ERROR.Printf("Unsupported protocol %T\n", t)
-			return
-		case *net.UDPAddr:
-			protocol = "udp"
-		case *net.TCPAddr:
-			protocol = "tcp"
-		}
-
 		for _, q := range req.Question {
-			jww.INFO.Printf("Incoming request #%v: %s %s %v - using %s\n",
+			jww.INFO.Printf("Incoming request #%v: %s %s %v - using %s",
 				req.Id,
 				dns.ClassToString[q.Qclass],
 				dns.TypeToString[q.Qtype],
@@ -52,28 +50,27 @@ func ServerHandler(addresses []string) dns.HandlerFunc {
 		}
 
 		for _, q := range req.Question {
-			if q.Name == "ya.ru" {
+			if addr, ok := addresses[q.Name]; ok {
 				msg := new(dns.Msg)
 				msg.SetReply(req)
+				a := &dns.A{
+					Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: ttl},
+					A: net.ParseIP(addr).To4(),
+				}
+				msg.Answer = append(msg.Answer, a)
 				w.WriteMsg(msg)
 				return
 			}
 		}
 		c := new(dns.Client)
-		c.Net = protocol
 		resp, rtt, err := c.Exchange(req, nameserver)
 		if err != nil {
-			jww.ERROR.Printf("%s\n", err.Error())
+			jww.ERROR.Printf("%s", err.Error())
 			sendFailure(w, req)
 			return
 		}
 
-		for _, a := range resp.Answer {
-			jww.INFO.Printf("Incoming answer #%v: %v - from %s\n",
-				resp.Id,
-				a, nameserver)
-		}
-		jww.INFO.Printf("Request #%v: %.3d µs, server: %s(%s), size: %d bytes\n", resp.Id, rtt / 1e3, nameserver, c.Net, resp.Len())
+		jww.INFO.Printf("Request #%v: %.3d µs, server: %s(%s), size: %d bytes", resp.Id, rtt / 1e3, nameserver, c.Net, resp.Len())
 		w.WriteMsg(resp)
 	} // end of handler
 }
