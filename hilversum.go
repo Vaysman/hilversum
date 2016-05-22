@@ -45,7 +45,9 @@ func main() {
 	jww.INFO.Println("Welcome to Hilversum")
 	// load config from json
 	// start dns proxy
-	hijackdns.Run(config)
+	// TODO uncomment before merge to master
+	//hijackdns.Run(config)
+	hijackdns.Configure(config)
 	// start http(s) proxy
 	httpproxy.Run(config)
 	// start web interface
